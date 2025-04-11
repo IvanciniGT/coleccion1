@@ -50,10 +50,9 @@
     tags:
             - knownhosts
 -   name:                   Asegurar que existe el archivo known_hosts en el entorno local
-    ansible.builtin.file:
-        path:               ~/.ssh/known_hosts
-        mode:               '0644'
-        state:              'file'
+    ansible.builtin.shell:
+        cmd: >-
+                            touch ~/.ssh/known_hosts
     delegate_to:            localhost
     run_once:               true
     changed_when:           false
