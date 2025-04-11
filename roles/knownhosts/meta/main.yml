@@ -1,0 +1,17 @@
+galaxy_info:
+  author: Ivan
+  description: Role para modificar el archivo knownhosts del entorno de ejecución de ansible, para controlar qué remotos deben añadirse/modificarse
+  company: Curso
+
+  license: license (GPL-2.0-or-later, MIT, etc)
+
+  min_ansible_version: 2.1
+
+  platforms:
+   - name: Linux
+
+  galaxy_tags: 
+    - knownhosts
+    - ssh
+
+dependencies: []

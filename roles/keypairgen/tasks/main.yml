@@ -1,0 +1,116 @@
+
+      - name:                 Asegurar las dependencias de módulos de python
+        pip:
+          name:               "{{ item }}"
+          state:              present
+        loop:                 "{{ pythonDependencies }}"
+        delegate_to:          localhost
+
+      - name:                 Calcular los valores por defecto de las claves ssh que hay que generar
+        set_fact:
+          defaultSettings: |
+                              {{ defaultSshKeyPairsSettings | combine((sshKeyPairs| default({})).defaultSettings | default({}), recursive = true) }}
+
+      - name:                 Aplicar los valores por defecto sobre cada keypair que haya que generar 
+        set_fact:
+          paresDeClaves: |
+                             {{ paresDeClaves | default([]) + [parDeClaves] }}
+        vars:
+          parDeClaves:      "{{ defaultSettings | combine(item, recursive = true) }}"
+        loop:               "{{ (sshKeyPairs| default({})).keyPairs | default([]) }}"
+
+      - name:                Validar los datos suministrados para cada par de claves
+        assert:
+          that:
+                          -  algoritmo in validAlgorithms
+                          -  (true if validAlgorithms[algoritmo] is none else item.algorithm.size in validAlgorithms[algoritmo])
+        vars:
+          algoritmo:         "{{ item.algorithm.name | lower }}"
+        loop:                "{{ paresDeClaves }}"
+
+      - name:                Asegurar que existe el directorio para almacenar las claves
+        file:
+          path:              "{{ item.files.path }}"
+          state:             directory
+        loop:                "{{ paresDeClaves }}"
+        delegate_to:          localhost
+
+      - name:                Generar las claves 
+
+        block:
+          - name:            Generar un UUID
+            set_fact:
+              paresDeClavesConUUID: |    
+                             {{ paresDeClavesConUUID | default([]) + [{'uuid': uuid, 'info': item}] }}
+            vars: 
+              uuid:         "{{ (item.files.path +'/'+ item.files.privateKeyName) | to_uuid }}"
+            loop:           "{{ paresDeClaves }}"
+
+          - name:            Asegurar que no hay datos anteriores
+            file:
+              path:          "/tmp/{{ item.uuid }}"
+              state:         absent
+            changed_when:    false
+            loop:            "{{ paresDeClavesConUUID }}"
+            delegate_to:          localhost
+
+          - name:            Asegurar que hay una carpeta temporal para ese UUID
+            file:
+              path:          "/tmp/{{ item.uuid }}"
+              state:         directory
+            changed_when:    false
+            loop:            "{{ paresDeClavesConUUID }}"
+            delegate_to:          localhost
+
+
+          - name:            Copiar las existentes (si las hay) a la carpeta temporal
+            copy:
+              remote_src:    true
+              src:           "{{ item.info.files.path }}/{{ item.info.files.privateKeyName }}"
+              dest:          "/tmp/{{ item.uuid }}/{{ item.uuid }}"
+            failed_when:     false
+            changed_when:    false
+            loop:            "{{ paresDeClavesConUUID }}"
+            delegate_to:          localhost
+
+          - name:            Copiar las existentes (si las hay) a la carpeta temporal
+            copy:
+              remote_src:    true
+              src:           "{{ item.info.files.path }}/{{ item.info.files.publicKeyName }}"
+              dest:          "/tmp/{{ item.uuid }}/{{ item.uuid }}.pub"
+            failed_when:     false
+            changed_when:    false
+            loop:            "{{ paresDeClavesConUUID }}"
+            delegate_to:          localhost
+
+          - name:            (Re)generamos las claves, caso de ser necesario
+            community.crypto.openssh_keypair:
+              path:          "/tmp/{{ item.uuid }}/{{ item.uuid }}"
+              type:          "{{ item.info.algorithm.name }}"
+              size:          "{{ item.info.algorithm.size }}"
+              regenerate:    "{{ 'always' if item.info.regenerate else 'never' }}"
+              passphrase:    "{{ item.info.passphrase }}"
+            changed_when:    false
+            loop:            "{{ paresDeClavesConUUID }}"
+            register:        resultado
+            async:           60
+            poll:            0
+            delegate_to:          localhost
+
+          - name:            Esperar a que se completen todas las tareas asíncronas
+            async_status:
+              jid:            "{{ item.ansible_job_id }}"
+            register:         async_status_result
+            until:            async_status_result.finished
+            retries:          10
+            delay:            3
+            changed_when:     false
+            loop:             "{{ resultado.results }}"
+            delegate_to:          localhost
+
+          - debug:
+               var: async_status_result
+
+          - name:            Copiar las claves privadas generadas a su destino y limpiar
+            include_tasks:    "copiado_claves.yaml"
+            loop:            "{{ async_status_result.results }}"
